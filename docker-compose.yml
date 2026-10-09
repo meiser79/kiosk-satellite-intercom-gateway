@@ -1,0 +1,15 @@
+services:
+  ks-intercom-gateway:
+    build: .
+    container_name: ks-intercom-gateway
+    restart: unless-stopped
+    # SIP/RTP and the kiosks' callbacks need the real LAN address.
+    network_mode: host
+    environment:
+      UI_ADDR: ":8099"
+      UI_USER: admin          # the UI has no login of its own: set these
+      UI_PASS: change-me
+      # SIGNAL_PORT: 2325     # kiosk callbacks, plain
+      # SIGNAL_TLS_PORT: 2326 # kiosk callbacks, TLS
+    volumes:
+      - ./config:/config

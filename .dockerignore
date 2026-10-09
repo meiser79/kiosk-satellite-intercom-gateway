@@ -1,0 +1,6 @@
+assets
+tests
+*.md
+.git
+.github
+repository.yaml

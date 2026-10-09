@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kiosk Satellite Intercom Gateway</title>
+<style>
+:root{color-scheme:light dark;--b:#8884;--ok:#2e9e5b;--err:#d04545;--warn:#c98a1b}
+body{font:14px system-ui,sans-serif;margin:0;padding:16px;max-width:1000px;margin:auto}
+h1{font-size:20px}h2{font-size:15px;margin:24px 0 8px}
+fieldset{border:1px solid var(--b);border-radius:8px;margin:8px 0;padding:10px 12px}
+label{display:block;margin:6px 0;font-size:12px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+input,select{font:inherit;padding:5px 7px;border:1px solid var(--b);border-radius:6px;background:transparent;color:inherit;width:100%;box-sizing:border-box}
+.row{display:grid;gap:8px}
+.row>div{min-width:0}
+.sip{grid-template-columns:2fr 1.5fr 1fr 1fr 1fr 1fr}
+.br{grid-template-columns:1.2fr 1fr 1fr 1fr 1.8fr .7fr}
+@media(max-width:600px){.sip,.br{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}}
+button{font:inherit;padding:6px 12px;border:1px solid var(--b);border-radius:6px;background:#8881;color:inherit;cursor:pointer}
+button.primary{background:#2a6fdb;color:#fff;border-color:#2a6fdb}
+.kiosk{display:grid;grid-template-columns:1fr 1.2fr .6fr auto auto;gap:6px;margin:4px 0;align-items:center}
+.pill{padding:2px 8px;border-radius:10px;font-size:12px;background:#8882}
+.ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}
+pre{max-height:240px;overflow:auto;background:#8881;padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap}
+#msg{min-height:20px;margin:8px 0}
+</style></head><body>
+<h1>Kiosk Satellite Intercom Gateway</h1>
+<div id="msg"></div>
+
+<h2>Intercom</h2>
+<fieldset>
+ <label>Intercom key (same as on the kiosks) <span id="keyState" class="pill"></span></label>
+ <input id="key" type="password" autocomplete="off" placeholder="Paste key – leave empty to keep the stored one">
+</fieldset>
+
+<h2>SIP / Asterisk</h2>
+<fieldset><div class="row sip">
+ <div><label>PBX (host[:port])</label><input id="sipServer" placeholder="192.168.1.10:5060"></div>
+ <div><label>Local IP (empty = auto)</label><input id="sipLocalIP"></div>
+ <div><label>SIP port (UDP)</label><input id="sipPort" type="number"></div>
+ <div><label>RTP from</label><input id="rtpMin" type="number"></div>
+ <div><label>RTP to</label><input id="rtpMax" type="number"></div>
+ <div><label>Ring timeout (s)</label><input id="ringTimeout" type="number"></div>
+</div></fieldset>
+
+<h2>Bridges (SIP account → kiosks)</h2>
+<div id="bridges"></div>
+<p><button onclick="addBridge()">+ Bridge</button> <button class="primary" onclick="save()">Save</button></p>
+
+<h2>Status</h2>
+<div id="status"></div>
+<h2>Log</h2>
+<pre id="log"></pre>
+
+<script>
+let cfg=null;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function msg(t,cls){$('msg').innerHTML='<span class="'+(cls||'')+'">'+esc(t)+'</span>'}
+async function load(){
+  cfg=await (await fetch('api/config')).json();
+  $('keyState').textContent=cfg.intercom_key_set?'set':'not set';
+  $('keyState').className='pill '+(cfg.intercom_key_set?'ok':'err');
+  $('key').value='';
+  const s=cfg.sip||{};
+  $('sipServer').value=s.server||'';$('sipLocalIP').value=s.local_ip||'';$('sipPort').value=s.local_port||5070;
+  $('rtpMin').value=s.rtp_min||10000;$('rtpMax').value=s.rtp_max||10100;$('ringTimeout').value=s.ring_timeout||40;
+  cfg.bridges=cfg.bridges||[];render();
+}
+function render(){
+  $('bridges').innerHTML=cfg.bridges.map((b,i)=>`
+  <fieldset><div class="row br">
+   <div><label>Name</label><input value="${esc(b.name)}" oninput="cfg.bridges[${i}].name=this.value"></div>
+   <div><label>SIP user (ext.)</label><input value="${esc(b.user)}" oninput="cfg.bridges[${i}].user=this.value"></div>
+   <div><label>Auth user (opt.)</label><input value="${esc(b.auth_user)}" oninput="cfg.bridges[${i}].auth_user=this.value"></div>
+   <div><label>Password ${b.password_set?'<span class="pill ok">set</span>':''}</label><input type="password" autocomplete="off" placeholder="${b.password_set?'unchanged':''}" oninput="cfg.bridges[${i}].password=this.value"></div>
+   <div><label>Mode</label><select onchange="cfg.bridges[${i}].mode=this.value">
+     <option value="ring" ${b.mode!='announce'?'selected':''}>Ring (first to answer wins)</option>
+     <option value="announce" ${b.mode=='announce'?'selected':''}>Announce (one-way to all)</option></select></div>
+   <div><label>Enabled</label><select onchange="cfg.bridges[${i}].enabled=this.value=='1'">
+     <option value="1" ${b.enabled?'selected':''}>yes</option><option value="0" ${!b.enabled?'selected':''}>no</option></select></div>
+  </div>
+  <label>Kiosks</label>
+  ${(b.kiosks||[]).map((k,j)=>`<div class="kiosk">
+    <input placeholder="Name" value="${esc(k.name)}" oninput="cfg.bridges[${i}].kiosks[${j}].name=this.value">
+    <input placeholder="Host/IP" value="${esc(k.host)}" oninput="cfg.bridges[${i}].kiosks[${j}].host=this.value">
+    <input placeholder="2324" type="number" value="${k.port||''}" oninput="cfg.bridges[${i}].kiosks[${j}].port=+this.value">
+    <button onclick="testK(${i},${j},this)">Test</button>
+    <button onclick="cfg.bridges[${i}].kiosks.splice(${j},1);render()">✕</button></div>`).join('')}
+  <button onclick="(cfg.bridges[${i}].kiosks=cfg.bridges[${i}].kiosks||[]).push({name:'',host:'',port:2324});render()">+ Kiosk</button>
+  <button onclick="cfg.bridges.splice(${i},1);render()" style="float:right">Delete bridge</button>
+  </fieldset>`).join('');
+}
+function addBridge(){cfg.bridges.push({id:'',name:'New',enabled:true,user:'',auth_user:'',mode:'ring',kiosks:[{name:'',host:'',port:2324}]});render()}
+async function testK(i,j,btn){
+  const k=cfg.bridges[i].kiosks[j];btn.disabled=true;
+  const r=await (await fetch('api/test',{method:'POST',body:JSON.stringify({host:k.host,port:k.port||2324})})).json();
+  btn.disabled=false;
+  const t={ready:'ready',off:'intercom off',key:'different key',dnd:'do not disturb',unreachable:'unreachable'}[r.status]||r.status;
+  msg(k.host+': '+t+(r.detail?' – '+r.detail:''),r.status=='ready'?'ok':'err');
+}
+async function save(){
+  cfg.intercom_key=$('key').value.trim();
+  cfg.sip={server:$('sipServer').value.trim(),local_ip:$('sipLocalIP').value.trim(),local_port:+$('sipPort').value,
+    rtp_min:+$('rtpMin').value,rtp_max:+$('rtpMax').value,ring_timeout:+$('ringTimeout').value};
+  const r=await fetch('api/config',{method:'PUT',body:JSON.stringify(cfg)});
+  const j=await r.json();
+  if(!r.ok){msg(j.error,'err');return}
+  msg('Saved.','ok');await load();
+}
+async function poll(){
+  try{
+    const s=await (await fetch('api/status')).json();
+    let h=s.accounts.map(a=>`<div>${esc(a.bridge)} (${esc(a.user)}): <b class="${a.state=='registered'?'ok':a.state=='error'?'err':'warn'}">${esc(a.state)}</b> ${esc(a.detail)}</div>`).join('');
+    h+=s.calls.map(c=>`<div>📞 ${esc(c.bridge)} ← ${esc(c.from)}: ${esc(c.state)}, ${c.seconds}s – ${esc((c.kiosks||[]).join(', '))}</div>`).join('');
+    $('status').innerHTML=h||'<i>no active accounts</i>';
+    $('log').textContent=await (await fetch('api/logs')).text();
+  }catch(e){}
+}
+load();poll();setInterval(poll,3000);
+</script></body></html>
