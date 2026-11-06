@@ -100,6 +100,7 @@ func TestCallThroughMultipleKiosks(t *testing.T) {
 		}
 		heard <- peak > 2000
 	}()
+	checkOrigin(t, ok)
 	gw := mediaAddr(ok)
 	seq, ts := uint16(100), uint32(0)
 	for i := 0; i < 60; i++ {

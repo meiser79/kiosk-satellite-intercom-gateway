@@ -305,14 +305,16 @@ func (o *sdpOffer) pickCodec() (uint8, bool) {
 	return 0, false
 }
 
-func buildSDP(ip string, port int, pt uint8) []byte {
+// buildSDP answers with one audio stream. sess and ver go into the origin
+// line, which RFC 4566 wants decimal: Asterisk rejects "Invalid SDP origin
+// line" when they start with a letter.
+func buildSDP(ip string, port int, pt uint8, sess, ver uint32) []byte {
 	name := "PCMU"
 	if pt == audio.PCMA {
 		name = "PCMA"
 	}
-	sess := randHex(4)
-	return []byte(fmt.Sprintf("v=0\r\no=- %s %s IN IP4 %s\r\ns=ks-intercom-gateway\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP %d\r\na=rtpmap:%d %s/8000\r\na=ptime:20\r\na=sendrecv\r\n",
-		sess, sess, ip, ip, port, pt, pt, name))
+	return []byte(fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=ks-intercom-gateway\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP %d\r\na=rtpmap:%d %s/8000\r\na=ptime:20\r\na=sendrecv\r\n",
+		sess, ver, ip, ip, port, pt, pt, name))
 }
 
 // displayName returns the quoted or bare display name of a From/PAI value.

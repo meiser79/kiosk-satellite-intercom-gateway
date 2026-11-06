@@ -3,6 +3,7 @@ package tests
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -130,6 +131,28 @@ func (p *fakePBX) wait(want int, d time.Duration) *msg {
 			p.t.Fatalf("timeout waiting for SIP %d", want)
 		}
 	}
+}
+
+// checkOrigin fails unless the answer's o= line carries decimal session id
+// and version, as RFC 4566 and Asterisk require.
+func checkOrigin(t *testing.T, ok *msg) {
+	t.Helper()
+	for _, l := range strings.Split(string(ok.body), "\n") {
+		if !strings.HasPrefix(l, "o=") {
+			continue
+		}
+		f := strings.Fields(strings.TrimSpace(l))
+		if len(f) != 6 {
+			t.Fatalf("origin line %q", l)
+		}
+		for _, v := range f[1:3] {
+			if _, err := strconv.ParseUint(v, 10, 64); err != nil {
+				t.Fatalf("origin line %q: %q is not decimal", l, v)
+			}
+		}
+		return
+	}
+	t.Fatal("answer has no origin line")
 }
 
 // media returns where the gateway wants RTP, from its 200 OK.

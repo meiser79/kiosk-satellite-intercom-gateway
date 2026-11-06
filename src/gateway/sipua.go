@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -546,7 +547,8 @@ func (ua *SIPUA) handleInvite(req *sipMsg, src *net.UDPAddr, existing *SIPCall) 
 		callID:    req.get("call-id"),
 		remoteTag: hparam(req.get("from"), "tag"),
 		ackCh:     make(chan struct{}), done: make(chan struct{}),
-		state: stateEarly,
+		sdpSess: rand.Uint32() >> 1,
+		state:   stateEarly,
 	}
 	c.routes = req.all("record-route")
 	ua.mu.Lock()
@@ -575,6 +577,8 @@ type SIPCall struct {
 	remoteTag string
 	routes    []string
 	offer     *sdpOffer
+	sdpSess   uint32 // origin session id, kept for the whole call
+	sdpVer    uint32 // origin version, one up for every new answer
 	pt        uint8
 
 	mu       sync.Mutex
@@ -663,7 +667,8 @@ func (c *SIPCall) Answer(minPort, maxPort int) (*rtpSession, error) {
 	r := c.ua.buildResponse(c.req, 200, "OK", c.localTag)
 	c.withContact(r)
 	r.add("content-type", "application/sdp")
-	r.body = buildSDP(c.ua.localIP, rtp.Port(), c.pt)
+	c.sdpVer = c.sdpSess
+	r.body = buildSDP(c.ua.localIP, rtp.Port(), c.pt, c.sdpSess, c.sdpVer)
 	c.sendFinal(r)
 	c.state = stateAnswered
 	go c.retransmit200()
@@ -714,6 +719,8 @@ func (c *SIPCall) onCancel() {
 func (c *SIPCall) onReinvite(req *sipMsg) {
 	c.mu.Lock()
 	rtp := c.rtp
+	c.sdpVer++
+	sess, ver := c.sdpSess, c.sdpVer
 	c.mu.Unlock()
 	if rtp == nil {
 		c.ua.send(c.ua.buildResponse(req, 491, "Request Pending", c.localTag).bytes(), c.src)
@@ -725,7 +732,7 @@ func (c *SIPCall) onReinvite(req *sipMsg) {
 	r := c.ua.buildResponse(req, 200, "OK", c.localTag)
 	c.withContact(r)
 	r.add("content-type", "application/sdp")
-	r.body = buildSDP(c.ua.localIP, rtp.Port(), c.pt)
+	r.body = buildSDP(c.ua.localIP, rtp.Port(), c.pt, sess, ver)
 	c.ua.send(r.bytes(), c.src)
 }
 
