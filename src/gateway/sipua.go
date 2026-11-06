@@ -14,17 +14,31 @@ import (
 
 type acctCfg struct{ User, AuthUser, Password string }
 
+// SIPKeepAlive is how often the gateway pings the PBX with OPTIONS. Tests
+// shorten it.
+var SIPKeepAlive = 15 * time.Second
+
+// regExpires is the registration lifetime asked for. Short enough that a PBX
+// which forgot us without the keep-alive noticing has us back within minutes.
+const regExpires = 120
+
+var errIntervalTooBrief = errors.New("registration interval too brief")
+
 type SIPUA struct {
 	cfg       SIPConfig
 	conn      *net.UDPConn
-	pbx       *net.UDPAddr
+	pbxHost   string
+	pbxPort   string
 	domain    string
 	localIP   string
 	localPort int
 	onInvite  func(*SIPCall)
 	onReg     func(user, state, detail string)
+	keepAlive time.Duration
+	pingUser  string
 
 	mu      sync.Mutex
+	pbx     *net.UDPAddr
 	accts   map[string]*sipAccount
 	pending map[string]chan *sipMsg
 	calls   map[string]*SIPCall
@@ -57,9 +71,9 @@ func NewSIPUA(cfg SIPConfig, accts []acctCfg, onInvite func(*SIPCall), onReg fun
 		return nil, err
 	}
 	ua := &SIPUA{
-		cfg: cfg, conn: conn, pbx: pbx, domain: cfg.Server, localIP: localIP,
+		cfg: cfg, conn: conn, pbx: pbx, pbxHost: host, pbxPort: port, domain: cfg.Server, localIP: localIP,
 		localPort: conn.LocalAddr().(*net.UDPAddr).Port,
-		onInvite:  onInvite, onReg: onReg,
+		onInvite:  onInvite, onReg: onReg, keepAlive: SIPKeepAlive,
 		accts: map[string]*sipAccount{}, pending: map[string]chan *sipMsg{}, calls: map[string]*SIPCall{},
 	}
 	if ua.onReg == nil {
@@ -69,13 +83,51 @@ func NewSIPUA(cfg SIPConfig, accts []acctCfg, onInvite func(*SIPCall), onReg fun
 	ua.wg.Add(1)
 	go ua.readLoop()
 	for _, a := range accts {
-		acc := &sipAccount{ua: ua, cfg: a, callID: randHex(8) + "@" + localIP, fromTag: randHex(4)}
+		acc := &sipAccount{ua: ua, cfg: a, callID: randHex(8) + "@" + localIP, fromTag: randHex(4),
+			expires: regExpires, kick: make(chan struct{}, 1)}
 		ua.accts[a.User] = acc
 		ua.wg.Add(1)
 		go acc.run()
 	}
+	if len(accts) > 0 {
+		ua.pingUser = accts[0].User
+		ua.wg.Add(1)
+		go ua.keepAliveLoop()
+	}
 	log.Printf("sip: UA on %s:%d, PBX %s", localIP, ua.localPort, pbx)
 	return ua, nil
+}
+
+func (ua *SIPUA) pbxAddr() *net.UDPAddr {
+	ua.mu.Lock()
+	defer ua.mu.Unlock()
+	return ua.pbx
+}
+
+// resolve looks the PBX up again: one restarted in a container or behind a
+// DNS name can come back on another address.
+func (ua *SIPUA) resolve() {
+	addr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(ua.pbxHost, ua.pbxPort))
+	if err != nil {
+		return
+	}
+	ua.mu.Lock()
+	moved := !addr.IP.Equal(ua.pbx.IP) || addr.Port != ua.pbx.Port
+	ua.pbx = addr
+	ua.mu.Unlock()
+	if moved {
+		log.Printf("sip: PBX now at %s", addr)
+	}
+}
+
+func (ua *SIPUA) accounts() []*sipAccount {
+	ua.mu.Lock()
+	defer ua.mu.Unlock()
+	out := make([]*sipAccount, 0, len(ua.accts))
+	for _, a := range ua.accts {
+		out = append(out, a)
+	}
+	return out
 }
 
 func (ua *SIPUA) send(b []byte, to *net.UDPAddr) {
@@ -99,11 +151,8 @@ func (ua *SIPUA) Close() {
 	for _, c := range ua.calls {
 		calls = append(calls, c)
 	}
-	accts := make([]*sipAccount, 0, len(ua.accts))
-	for _, a := range ua.accts {
-		accts = append(accts, a)
-	}
 	ua.mu.Unlock()
+	accts := ua.accounts()
 	for _, c := range calls {
 		c.Hangup()
 	}
@@ -131,7 +180,7 @@ func (ua *SIPUA) readLoop() {
 		if err != nil {
 			return
 		}
-		if !src.IP.Equal(ua.pbx.IP) {
+		if !src.IP.Equal(ua.pbxAddr().IP) {
 			log.Printf("sip: ignoring packet from %s", src)
 			continue
 		}
@@ -174,7 +223,7 @@ func (ua *SIPUA) transaction(req *sipMsg, tries int) (*sipMsg, error) {
 	data := req.bytes()
 	d := 500 * time.Millisecond
 	for i := 0; i < tries; i++ {
-		ua.send(data, ua.pbx)
+		ua.send(data, ua.pbxAddr())
 		timer := time.NewTimer(d)
 	wait:
 		for {
@@ -198,6 +247,62 @@ func (ua *SIPUA) transaction(req *sipMsg, tries int) (*sipMsg, error) {
 	return nil, errors.New("timeout")
 }
 
+// keepAliveLoop pings the PBX. A PBX that stops answering and comes back has
+// most likely restarted and may have forgotten the registrations, so every
+// account registers again right away instead of at its next refresh.
+func (ua *SIPUA) keepAliveLoop() {
+	defer ua.wg.Done()
+	t := time.NewTicker(ua.keepAlive)
+	defer t.Stop()
+	up := true
+	for {
+		select {
+		case <-ua.ctx.Done():
+			return
+		case <-t.C:
+		}
+		_, err := ua.transaction(ua.buildOptions(), 3)
+		if ua.ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			if up {
+				up = false
+				log.Printf("sip: PBX %s not answering", ua.pbxAddr())
+				for _, a := range ua.accounts() {
+					a.setReg(false)
+					ua.onReg(a.cfg.User, "error", "PBX not answering")
+				}
+			}
+			ua.resolve()
+			continue
+		}
+		if !up {
+			up = true
+			log.Printf("sip: PBX answering again, registering")
+			for _, a := range ua.accounts() {
+				a.kickNow()
+			}
+		}
+	}
+}
+
+// buildOptions is the keep-alive ping. It comes from a bridge's account so
+// Asterisk matches an endpoint: an unknown one logs "No matching endpoint",
+// which fail2ban counts as an attack.
+func (ua *SIPUA) buildOptions() *sipMsg {
+	m := &sipMsg{isReq: true, method: "OPTIONS", ruri: "sip:" + ua.domain}
+	m.add("via", ua.newVia())
+	m.add("max-forwards", "70")
+	m.add("from", fmt.Sprintf("<sip:%s@%s>;tag=%s", ua.pingUser, ua.domain, randHex(4)))
+	m.add("to", fmt.Sprintf("<sip:%s>", ua.domain))
+	m.add("call-id", randHex(8)+"@"+ua.localIP)
+	m.add("cseq", "1 OPTIONS")
+	m.add("contact", ua.contact(ua.pingUser))
+	m.add("user-agent", "ks-intercom-gateway/"+Version)
+	return m
+}
+
 // ---- registration -----------------------------------------------------------
 
 type sipAccount struct {
@@ -206,6 +311,8 @@ type sipAccount struct {
 	callID  string
 	fromTag string
 	cseq    int
+	expires int
+	kick    chan struct{}
 	mu      sync.Mutex
 	regd    bool
 }
@@ -214,15 +321,29 @@ func (a *sipAccount) isRegistered() bool { a.mu.Lock(); defer a.mu.Unlock(); ret
 
 func (a *sipAccount) setReg(v bool) { a.mu.Lock(); a.regd = v; a.mu.Unlock() }
 
+// kickNow makes the account register now instead of at its next refresh.
+func (a *sipAccount) kickNow() {
+	select {
+	case a.kick <- struct{}{}:
+	default:
+	}
+}
+
 func (a *sipAccount) run() {
 	defer a.ua.wg.Done()
 	for {
 		a.ua.onReg(a.cfg.User, "registering", "")
-		exp, err := a.register(300)
+		a.mu.Lock()
+		want := a.expires
+		a.mu.Unlock()
+		exp, err := a.register(want)
 		if a.ua.ctx.Err() != nil {
 			return
 		}
 		wait := 30 * time.Second
+		if errors.Is(err, errIntervalTooBrief) {
+			wait = 0
+		}
 		if err != nil {
 			a.setReg(false)
 			a.ua.onReg(a.cfg.User, "error", err.Error())
@@ -238,6 +359,7 @@ func (a *sipAccount) run() {
 		select {
 		case <-a.ua.ctx.Done():
 			return
+		case <-a.kick:
 		case <-time.After(wait):
 		}
 	}
@@ -296,19 +418,34 @@ func (a *sipAccount) register(expires int) (int, error) {
 			return 0, err
 		}
 	}
+	if resp.status == 423 && expires > 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(resp.get("min-expires"))); err == nil && n > expires {
+			a.mu.Lock()
+			a.expires = n
+			a.mu.Unlock()
+			return 0, fmt.Errorf("%w: PBX wants at least %ds", errIntervalTooBrief, n)
+		}
+	}
 	if resp.status/100 != 2 {
 		return 0, fmt.Errorf("%d %s", resp.status, resp.reason)
 	}
 	if expires == 0 {
 		return 0, nil
 	}
-	exp := expires
+	// The shortest lifetime granted: refreshing early does no harm.
+	exp := 0
 	for _, c := range resp.all("contact") {
-		if e := hparam(c, "expires"); e != "" {
-			if n, err := strconv.Atoi(e); err == nil {
-				exp = n
-			}
+		if n, err := strconv.Atoi(hparam(c, "expires")); err == nil && n > 0 && (exp == 0 || n < exp) {
+			exp = n
 		}
+	}
+	if exp == 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(resp.get("expires"))); err == nil && n > 0 {
+			exp = n
+		}
+	}
+	if exp == 0 {
+		exp = expires
 	}
 	return exp, nil
 }

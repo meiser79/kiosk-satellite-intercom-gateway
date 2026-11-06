@@ -197,3 +197,31 @@ func TestPBXKeepAliveIsAnswered(t *testing.T) {
 	pbx.send("OPTIONS", "opt-1@pbx", 1, "", nil)
 	pbx.wait(200, 2*time.Second)
 }
+
+// A restarting PBX forgets the registration. The gateway notices the outage
+// through its keep-alive and registers again as soon as the PBX is back,
+// without waiting for its next refresh.
+func TestReRegistersAfterPBXRestart(t *testing.T) {
+	old := gateway.SIPKeepAlive
+	gateway.SIPKeepAlive = 200 * time.Millisecond
+	t.Cleanup(func() { gateway.SIPKeepAlive = old })
+	mgr, pbx := setup(t, testKey, newFakeKiosk(t, testKey, "answer"))
+
+	pbx.down.Store(true)
+	deadline := time.Now().Add(8 * time.Second)
+	for mgr.Status().Accounts[0].State != "error" {
+		if time.Now().After(deadline) {
+			t.Fatalf("outage not noticed: %+v", mgr.Status().Accounts)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	pbx.down.Store(false)
+	select {
+	case <-pbx.regd:
+	case <-time.After(3 * time.Second):
+		t.Fatal("gateway did not register again after the PBX came back")
+	}
+	if pbx.pings.Load() == 0 {
+		t.Fatal("no keep-alive reached the PBX")
+	}
+}

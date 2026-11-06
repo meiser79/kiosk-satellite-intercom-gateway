@@ -26,6 +26,8 @@ type fakePBX struct {
 	in      chan *msg
 	regd    chan struct{}
 	authBad atomic.Bool
+	down    atomic.Bool // restarting: drops everything
+	pings   atomic.Int32
 	fromHdr string
 }
 
@@ -56,8 +58,14 @@ func (p *fakePBX) run() {
 		if err != nil {
 			return
 		}
+		if p.down.Load() {
+			continue
+		}
 		m := parse(append([]byte(nil), buf[:n]...))
 		switch {
+		case m.isReq() && m.method() == "OPTIONS":
+			p.pings.Add(1)
+			p.conn.WriteToUDP(reply(m, 200, "OK", "x"), src)
 		case m.isReq() && m.method() == "REGISTER":
 			auth := m.get("authorization")
 			switch {
