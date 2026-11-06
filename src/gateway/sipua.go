@@ -15,6 +15,13 @@ import (
 
 type acctCfg struct{ User, AuthUser, Password string }
 
+func (c acctCfg) authUser() string {
+	if c.AuthUser != "" {
+		return c.AuthUser
+	}
+	return c.User
+}
+
 // SIPKeepAlive is how often the gateway pings the PBX with OPTIONS. Tests
 // shorten it.
 var SIPKeepAlive = 15 * time.Second
@@ -36,7 +43,8 @@ type SIPUA struct {
 	onInvite  func(*SIPCall)
 	onReg     func(user, state, detail string)
 	keepAlive time.Duration
-	pingUser  string
+	pingAcct  acctCfg
+	pingAuth  sipChallenge // last challenge to a ping, only touched by keepAliveLoop
 
 	mu      sync.Mutex
 	pbx     *net.UDPAddr
@@ -91,7 +99,7 @@ func NewSIPUA(cfg SIPConfig, accts []acctCfg, onInvite func(*SIPCall), onReg fun
 		go acc.run()
 	}
 	if len(accts) > 0 {
-		ua.pingUser = accts[0].User
+		ua.pingAcct = accts[0]
 		ua.wg.Add(1)
 		go ua.keepAliveLoop()
 	}
@@ -262,7 +270,7 @@ func (ua *SIPUA) keepAliveLoop() {
 			return
 		case <-t.C:
 		}
-		_, err := ua.transaction(ua.buildOptions(), 3)
+		err := ua.ping()
 		if ua.ctx.Err() != nil {
 			return
 		}
@@ -288,19 +296,59 @@ func (ua *SIPUA) keepAliveLoop() {
 	}
 }
 
-// buildOptions is the keep-alive ping. It comes from a bridge's account so
-// Asterisk matches an endpoint: an unknown one logs "No matching endpoint",
-// which fail2ban counts as an attack.
-func (ua *SIPUA) buildOptions() *sipMsg {
+// sipChallenge is a 401 or 407 challenge, kept to answer it again.
+type sipChallenge struct {
+	status int
+	value  string
+}
+
+func challengeOf(resp *sipMsg) sipChallenge {
+	if resp.status == 407 {
+		return sipChallenge{407, resp.get("proxy-authenticate")}
+	}
+	return sipChallenge{401, resp.get("www-authenticate")}
+}
+
+// ping sends the keep-alive. Any answer means the PBX is up. Asterisk
+// challenges OPTIONS, so the ping answers with the account's credentials and
+// sends that nonce straight away next time: only a nonce Asterisk no longer
+// takes (nonce_lifetime, 32 s by default) costs another 401.
+func (ua *SIPUA) ping() error {
+	resp, err := ua.transaction(ua.buildOptions(ua.pingAuth), 3)
+	if err != nil {
+		return err
+	}
+	if resp.status == 401 || resp.status == 407 {
+		ua.pingAuth = challengeOf(resp)
+		_, _ = ua.transaction(ua.buildOptions(ua.pingAuth), 3)
+	}
+	return nil
+}
+
+// buildOptions is the keep-alive ping, with credentials when ch holds a
+// challenge. It comes from a bridge's account so Asterisk matches an
+// endpoint: an unknown one logs "No matching endpoint", which fail2ban counts
+// as an attack.
+func (ua *SIPUA) buildOptions(ch sipChallenge) *sipMsg {
+	user := ua.pingAcct.User
 	m := &sipMsg{isReq: true, method: "OPTIONS", ruri: "sip:" + ua.domain}
 	m.add("via", ua.newVia())
 	m.add("max-forwards", "70")
-	m.add("from", fmt.Sprintf("<sip:%s@%s>;tag=%s", ua.pingUser, ua.domain, randHex(4)))
+	m.add("from", fmt.Sprintf("<sip:%s@%s>;tag=%s", user, ua.domain, randHex(4)))
 	m.add("to", fmt.Sprintf("<sip:%s>", ua.domain))
 	m.add("call-id", randHex(8)+"@"+ua.localIP)
 	m.add("cseq", "1 OPTIONS")
-	m.add("contact", ua.contact(ua.pingUser))
+	m.add("contact", ua.contact(user))
 	m.add("user-agent", "ks-intercom-gateway/"+Version)
+	if ch.value != "" {
+		if val, err := digestAuth(ch.value, "OPTIONS", m.ruri, ua.pingAcct.authUser(), ua.pingAcct.Password); err == nil {
+			name := "authorization"
+			if ch.status == 407 {
+				name = "proxy-authorization"
+			}
+			m.add(name, val)
+		}
+	}
 	return m
 }
 
@@ -403,11 +451,7 @@ func (a *sipAccount) register(expires int) (int, error) {
 		if resp.status == 407 {
 			name, hn = "proxy-authorization", "proxy-authenticate"
 		}
-		user := a.cfg.AuthUser
-		if user == "" {
-			user = a.cfg.User
-		}
-		val, err := digestAuth(resp.get(hn), "REGISTER", req.ruri, user, a.cfg.Password)
+		val, err := digestAuth(resp.get(hn), "REGISTER", req.ruri, a.cfg.authUser(), a.cfg.Password)
 		if err != nil {
 			return 0, err
 		}

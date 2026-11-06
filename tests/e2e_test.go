@@ -226,3 +226,23 @@ func TestReRegistersAfterPBXRestart(t *testing.T) {
 		t.Fatal("no keep-alive reached the PBX")
 	}
 }
+
+// The keep-alive answers the PBX's challenge and reuses the nonce, so only
+// the first ping is refused with 401 while the nonce stays valid.
+func TestKeepAliveAuthenticates(t *testing.T) {
+	old := gateway.SIPKeepAlive
+	gateway.SIPKeepAlive = 100 * time.Millisecond
+	t.Cleanup(func() { gateway.SIPKeepAlive = old })
+	_, pbx := setup(t, testKey, newFakeKiosk(t, testKey, "answer"))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for pbx.pings.Load() < 5 {
+		if time.Now().After(deadline) {
+			t.Fatalf("authenticated pings: %d, challenged: %d", pbx.pings.Load(), pbx.optChal.Load())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if n := pbx.optChal.Load(); n != 1 {
+		t.Fatalf("pings challenged %d times, want once", n)
+	}
+}

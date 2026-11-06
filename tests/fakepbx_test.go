@@ -27,8 +27,9 @@ type fakePBX struct {
 	in      chan *msg
 	regd    chan struct{}
 	authBad atomic.Bool
-	down    atomic.Bool // restarting: drops everything
-	pings   atomic.Int32
+	down    atomic.Bool  // restarting: drops everything
+	pings   atomic.Int32 // OPTIONS that passed digest auth
+	optChal atomic.Int32 // OPTIONS challenged with 401
 	fromHdr string
 }
 
@@ -65,6 +66,13 @@ func (p *fakePBX) run() {
 		m := parse(append([]byte(nil), buf[:n]...))
 		switch {
 		case m.isReq() && m.method() == "OPTIONS":
+			// Asterisk challenges OPTIONS from an endpoint with credentials.
+			if !digestOK(m.get("authorization"), "OPTIONS", pbxUser, pbxPass, pbxRealm, pbxNonce) {
+				p.optChal.Add(1)
+				p.conn.WriteToUDP(reply(m, 401, "Unauthorized", "x",
+					[2]string{"WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", algorithm=MD5, qop="auth"`, pbxRealm, pbxNonce)}), src)
+				continue
+			}
 			p.pings.Add(1)
 			p.conn.WriteToUDP(reply(m, 200, "OK", "x"), src)
 		case m.isReq() && m.method() == "REGISTER":
