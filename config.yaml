@@ -1,5 +1,5 @@
 name: Kiosk Satellite Intercom Gateway
-version: "0.1.1"
+version: "0.1.2"
 slug: ks_intercom_gateway
 description: Rings Kiosk Satellite intercoms when an Asterisk/SIP account is called
 url: https://github.com/meiser79/kiosk-satellite-intercom-gateway

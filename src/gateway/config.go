@@ -14,7 +14,7 @@ import (
 
 const (
 	gatewayName  = "Kiosk Satellite Intercom Gateway"
-	Version      = "0.1.1"
+	Version      = "0.1.2"
 	defaultAdmin = 2324
 )
 
