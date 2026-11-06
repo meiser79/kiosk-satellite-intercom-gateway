@@ -296,17 +296,19 @@ func (ua *SIPUA) keepAliveLoop() {
 	}
 }
 
-// sipChallenge is a 401 or 407 challenge, kept to answer it again.
+// sipChallenge is a 401 or 407 challenge, kept to answer it again. nc is
+// the count of the last request sent with its nonce.
 type sipChallenge struct {
 	status int
 	value  string
+	nc     int
 }
 
 func challengeOf(resp *sipMsg) sipChallenge {
 	if resp.status == 407 {
-		return sipChallenge{407, resp.get("proxy-authenticate")}
+		return sipChallenge{407, resp.get("proxy-authenticate"), 1}
 	}
-	return sipChallenge{401, resp.get("www-authenticate")}
+	return sipChallenge{401, resp.get("www-authenticate"), 1}
 }
 
 // ping sends the keep-alive. Any answer means the PBX is up. Asterisk
@@ -314,6 +316,7 @@ func challengeOf(resp *sipMsg) sipChallenge {
 // sends that nonce straight away next time: only a nonce Asterisk no longer
 // takes (nonce_lifetime, 32 s by default) costs another 401.
 func (ua *SIPUA) ping() error {
+	ua.pingAuth.nc++
 	resp, err := ua.transaction(ua.buildOptions(ua.pingAuth), 3)
 	if err != nil {
 		return err
@@ -341,7 +344,7 @@ func (ua *SIPUA) buildOptions(ch sipChallenge) *sipMsg {
 	m.add("contact", ua.contact(user))
 	m.add("user-agent", "ks-intercom-gateway/"+Version)
 	if ch.value != "" {
-		if val, err := digestAuth(ch.value, "OPTIONS", m.ruri, ua.pingAcct.authUser(), ua.pingAcct.Password); err == nil {
+		if val, err := digestAuth(ch.value, "OPTIONS", m.ruri, ua.pingAcct.authUser(), ua.pingAcct.Password, ch.nc); err == nil {
 			name := "authorization"
 			if ch.status == 407 {
 				name = "proxy-authorization"
@@ -451,7 +454,7 @@ func (a *sipAccount) register(expires int) (int, error) {
 		if resp.status == 407 {
 			name, hn = "proxy-authorization", "proxy-authenticate"
 		}
-		val, err := digestAuth(resp.get(hn), "REGISTER", req.ruri, a.cfg.authUser(), a.cfg.Password)
+		val, err := digestAuth(resp.get(hn), "REGISTER", req.ruri, a.cfg.authUser(), a.cfg.Password, 1)
 		if err != nil {
 			return 0, err
 		}

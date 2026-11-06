@@ -30,6 +30,7 @@ type fakePBX struct {
 	down    atomic.Bool  // restarting: drops everything
 	pings   atomic.Int32 // OPTIONS that passed digest auth
 	optChal atomic.Int32 // OPTIONS challenged with 401
+	optNC   int64        // last nonce count of an OPTIONS, only touched by run
 	fromHdr string
 }
 
@@ -67,12 +68,16 @@ func (p *fakePBX) run() {
 		switch {
 		case m.isReq() && m.method() == "OPTIONS":
 			// Asterisk challenges OPTIONS from an endpoint with credentials.
-			if !digestOK(m.get("authorization"), "OPTIONS", pbxUser, pbxPass, pbxRealm, pbxNonce) {
+			// Unlike Asterisk, a nonce count that does not go up is a replay.
+			auth := m.get("authorization")
+			nc := nonceCount(auth)
+			if !digestOK(auth, "OPTIONS", pbxUser, pbxPass, pbxRealm, pbxNonce) || nc <= p.optNC {
 				p.optChal.Add(1)
 				p.conn.WriteToUDP(reply(m, 401, "Unauthorized", "x",
 					[2]string{"WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", algorithm=MD5, qop="auth"`, pbxRealm, pbxNonce)}), src)
 				continue
 			}
+			p.optNC = nc
 			p.pings.Add(1)
 			p.conn.WriteToUDP(reply(m, 200, "OK", "x"), src)
 		case m.isReq() && m.method() == "REGISTER":

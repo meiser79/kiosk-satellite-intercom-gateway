@@ -209,7 +209,9 @@ func md5hex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func digestAuth(challenge, method, uri, user, pass string) (string, error) {
+// digestAuth answers a challenge. nc counts the requests sent with this
+// nonce, starting at 1: a server may take a repeated count for a replay.
+func digestAuth(challenge, method, uri, user, pass string, nc int) (string, error) {
 	if !strings.HasPrefix(strings.ToLower(challenge), "digest") {
 		return "", errors.New("unsupported auth scheme")
 	}
@@ -229,9 +231,9 @@ func digestAuth(challenge, method, uri, user, pass string) (string, error) {
 	ha2 := md5hex(method + ":" + uri)
 	var resp, extra string
 	if qop := p["qop"]; strings.Contains(qop, "auth") {
-		cnonce, nc := randHex(8), "00000001"
-		resp = md5hex(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2)
-		extra = fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, nc, cnonce)
+		cnonce, ncs := randHex(8), fmt.Sprintf("%08x", nc)
+		resp = md5hex(ha1 + ":" + nonce + ":" + ncs + ":" + cnonce + ":auth:" + ha2)
+		extra = fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, ncs, cnonce)
 	} else {
 		resp = md5hex(ha1 + ":" + nonce + ":" + ha2)
 	}

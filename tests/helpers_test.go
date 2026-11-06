@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -203,6 +204,17 @@ func digestOK(auth, method, user, pass, realm, nonce string) bool {
 	ha1 := md5hex(user + ":" + realm + ":" + pass)
 	ha2 := md5hex(method + ":" + p["uri"])
 	return p["response"] == md5hex(ha1+":"+nonce+":"+p["nc"]+":"+p["cnonce"]+":auth:"+ha2)
+}
+
+// nonceCount reads nc from an Authorization header, 0 when absent.
+func nonceCount(auth string) int64 {
+	for _, m := range authParam.FindAllStringSubmatch(strings.TrimPrefix(auth, "Digest "), -1) {
+		if m[1] == "nc" {
+			n, _ := strconv.ParseInt(m[2], 16, 64)
+			return n
+		}
+	}
+	return 0
 }
 
 // ---- audio helpers ----------------------------------------------------------
