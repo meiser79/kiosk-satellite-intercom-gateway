@@ -78,6 +78,13 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	mgr := gateway.NewManager(store, sigPort, sigTLSPort)
+	disc := gateway.NewDiscovery()
+	if err := disc.Start(); err != nil {
+		log.Printf("mdns: %v", err)
+	} else {
+		mgr.SetDiscovery(disc)
+		defer disc.Close()
+	}
 	if err := mgr.Reload(store.Get()); err != nil {
 		log.Printf("start: %v", err)
 	}

@@ -85,6 +85,28 @@ func NewUI(store *Store, mgr *Manager, logs *LogBuffer, allow, user, pass string
 		}
 	})
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, mgr.Status()) })
+	mux.HandleFunc("/api/kiosks", func(w http.ResponseWriter, r *http.Request) {
+		d := mgr.Discovery()
+		out := struct {
+			Enabled   bool              `json:"enabled"`
+			Listening bool              `json:"listening"`
+			Kiosks    []DiscoveredKiosk `json:"kiosks"`
+		}{Kiosks: []DiscoveredKiosk{}}
+		if d != nil {
+			out.Enabled, out.Listening, out.Kiosks = true, d.Listening(), d.List()
+		}
+		writeJSON(w, 200, out)
+	})
+	mux.HandleFunc("/api/kiosks/scan", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method", 405)
+			return
+		}
+		if d := mgr.Discovery(); d != nil {
+			d.Scan()
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprint(w, logs.Text())

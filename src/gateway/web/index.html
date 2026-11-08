@@ -2,24 +2,43 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kiosk Satellite Intercom Gateway</title>
 <style>
-:root{color-scheme:light dark;--b:#8884;--ok:#2e9e5b;--err:#d04545;--warn:#c98a1b}
+:root{color-scheme:light dark;--b:#8884;--ok:#2e9e5b;--err:#d04545;--warn:#c98a1b;--acc:#2a6fdb}
 body{font:14px system-ui,sans-serif;margin:0;padding:16px;max-width:1000px;margin:auto}
-h1{font-size:20px}h2{font-size:15px;margin:24px 0 8px}
+h1{font-size:20px}h2{font-size:15px;margin:24px 0 8px;display:flex;align-items:center;gap:8px}
+h2 .grow{flex:1}
 fieldset{border:1px solid var(--b);border-radius:8px;margin:8px 0;padding:10px 12px}
 label{display:block;margin:6px 0;font-size:12px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 input,select{font:inherit;padding:5px 7px;border:1px solid var(--b);border-radius:6px;background:transparent;color:inherit;width:100%;box-sizing:border-box}
+select option{background:Canvas;color:CanvasText}
 .row{display:grid;gap:8px}
 .row>div{min-width:0}
 .sip{grid-template-columns:2fr 1.5fr 1fr 1fr 1fr 1fr}
 .br{grid-template-columns:1.2fr 1fr 1fr 1fr 1.8fr .7fr}
 @media(max-width:600px){.sip,.br{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}}
-button{font:inherit;padding:6px 12px;border:1px solid var(--b);border-radius:6px;background:#8881;color:inherit;cursor:pointer}
-button.primary{background:#2a6fdb;color:#fff;border-color:#2a6fdb}
-.kiosk{display:grid;grid-template-columns:1fr 1.2fr .6fr auto auto;gap:6px;margin:4px 0;align-items:center}
-.pill{padding:2px 8px;border-radius:10px;font-size:12px;background:#8882}
+button{font:inherit;padding:6px 12px;border:1px solid var(--b);border-radius:6px;background:#8881;color:inherit;cursor:pointer;white-space:nowrap}
+button.primary{background:var(--acc);color:#fff;border-color:var(--acc)}
+button.small{padding:3px 8px;font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#8882;white-space:nowrap}
+.pill.ok{background:#2e9e5b22}.pill.err{background:#d0454522}.pill.warn{background:#c98a1b22}
 .ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}
+.muted{opacity:.65;font-size:12px}
 pre{max-height:240px;overflow:auto;background:#8881;padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap}
-#msg{min-height:20px;margin:8px 0}
+#msg{min-height:20px;margin:8px 0;position:sticky;top:0;padding:4px 0;background:Canvas;z-index:1}
+/* found kiosks */
+.found{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.6fr) auto;gap:8px 12px;align-items:center;padding:8px 0;border-top:1px solid var(--b)}
+.found:first-child{border-top:0}
+.found .name{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 10px;border-radius:12px;background:#2a6fdb22;font-size:12px}
+.chip button{border:0;background:transparent;padding:0 4px;font-size:12px;opacity:.7}
+.chips select{width:auto;padding:2px 6px;font-size:12px}
+.acts{display:flex;gap:6px}
+@media(max-width:700px){.found{grid-template-columns:1fr auto}.found .addr{grid-column:1}.found .chips{grid-column:1/-1}}
+/* kiosks of a bridge */
+.kiosk{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) 80px auto auto;gap:6px;margin:4px 0;align-items:center}
+.kiosk .where{display:grid;grid-template-columns:minmax(0,1fr) 80px;gap:6px}
+input[readonly]{background:#8881;cursor:default;opacity:.85}
+@media(max-width:600px){.kiosk{grid-template-columns:1fr auto auto auto}.kiosk>input{grid-column:1/-1}}
 </style></head><body>
 <h1>Kiosk Satellite Intercom Gateway</h1>
 <div id="msg"></div>
@@ -27,18 +46,21 @@ pre{max-height:240px;overflow:auto;background:#8881;padding:8px;border-radius:6p
 <h2>Intercom</h2>
 <fieldset>
  <label>Intercom key (same as on the kiosks) <span id="keyState" class="pill"></span></label>
- <input id="key" type="password" autocomplete="off" placeholder="Paste key – leave empty to keep the stored one">
+ <input id="key" type="password" autocomplete="off" placeholder="Paste key – leave empty to keep the stored one" oninput="dirty()">
 </fieldset>
 
 <h2>SIP / Asterisk</h2>
 <fieldset><div class="row sip">
- <div><label>PBX (host[:port])</label><input id="sipServer" placeholder="192.168.1.10:5060"></div>
- <div><label>Local IP (empty = auto)</label><input id="sipLocalIP"></div>
- <div><label>SIP port (UDP)</label><input id="sipPort" type="number"></div>
- <div><label>RTP from</label><input id="rtpMin" type="number"></div>
- <div><label>RTP to</label><input id="rtpMax" type="number"></div>
- <div><label>Ring timeout (s)</label><input id="ringTimeout" type="number"></div>
+ <div><label>PBX (host[:port])</label><input id="sipServer" placeholder="192.168.1.10:5060" oninput="dirty()"></div>
+ <div><label>Local IP (empty = auto)</label><input id="sipLocalIP" oninput="dirty()"></div>
+ <div><label>SIP port (UDP)</label><input id="sipPort" type="number" oninput="dirty()"></div>
+ <div><label>RTP from</label><input id="rtpMin" type="number" oninput="dirty()"></div>
+ <div><label>RTP to</label><input id="rtpMax" type="number" oninput="dirty()"></div>
+ <div><label>Ring timeout (s)</label><input id="ringTimeout" type="number" oninput="dirty()"></div>
 </div></fieldset>
+
+<h2><span class="grow">Kiosks on the network</span><span id="mdnsState" class="muted"></span><button class="small" onclick="scan(this)">Search again</button></h2>
+<fieldset id="found"></fieldset>
 
 <h2>Bridges (SIP account → kiosks)</h2>
 <div id="bridges"></div>
@@ -50,10 +72,20 @@ pre{max-height:240px;overflow:auto;background:#8881;padding:8px;border-radius:6p
 <pre id="log"></pre>
 
 <script>
-let cfg=null;
+let cfg=null, found=[], mdns={enabled:false,listening:false}, unsaved=false, foundSig='';
 const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function msg(t,cls){$('msg').innerHTML='<span class="'+(cls||'')+'">'+esc(t)+'</span>'}
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function msg(t,cls){$('msg').innerHTML=t?'<span class="'+(cls||'')+'">'+esc(t)+'</span>':''}
+function dirty(){unsaved=true;msg('Unsaved changes – press Save.','warn')}
+
+// A configured kiosk is a found one when it was added from the list (same id)
+// or, entered by hand, sits at the same address and port.
+function same(k,d){return k.id?k.id===d.id:(k.host===d.address&&(k.port||2324)===d.port)}
+function foundFor(k){return found.find(d=>same(k,d))}
+// The order the gateway keeps them in: case and umlauts aside.
+const byName=(a,b)=>String(a.name||a.host||'').localeCompare(String(b.name||b.host||''),'de',{sensitivity:'base'});
+function bridgesOf(d){return cfg.bridges.map((b,i)=>[b,i]).filter(([b])=>(b.kiosks||[]).some(k=>same(k,d)))}
+
 async function load(){
   cfg=await (await fetch('api/config')).json();
   $('keyState').textContent=cfg.intercom_key_set?'set':'not set';
@@ -62,48 +94,129 @@ async function load(){
   const s=cfg.sip||{};
   $('sipServer').value=s.server||'';$('sipLocalIP').value=s.local_ip||'';$('sipPort').value=s.local_port||5070;
   $('rtpMin').value=s.rtp_min||10000;$('rtpMax').value=s.rtp_max||10100;$('ringTimeout').value=s.ring_timeout||40;
-  cfg.bridges=cfg.bridges||[];render();
+  cfg.bridges=cfg.bridges||[];
+  unsaved=false;
+  await loadFound();
+  render();
 }
-function render(){
+async function loadFound(){
+  try{
+    const r=await (await fetch('api/kiosks')).json();
+    found=r.kiosks||[];mdns=r;
+  }catch(e){}
+}
+function render(){renderFound();renderBridges()}
+
+function renderFound(){
+  $('mdnsState').textContent=!mdns.enabled?'mDNS unavailable':mdns.listening?'':'asking every 30 s (port 5353 busy)';
+  if(!found.length){
+    $('found').innerHTML=`<div class="muted">${mdns.enabled
+      ?'No kiosks found yet. A kiosk announces itself when its remote admin and <b>Find other kiosks</b> are on, and only within the same network (mDNS does not cross VLANs). Kiosks elsewhere can still be added by hand to a bridge.'
+      :'mDNS discovery could not start, see the log. Add kiosks by hand to a bridge.'}</div>`;
+    return;
+  }
+  $('found').innerHTML=found.map((d,di)=>{
+    const mine=bridgesOf(d);
+    const free=cfg.bridges.map((b,i)=>[b,i]).filter(([b])=>!(b.kiosks||[]).some(k=>same(k,d)));
+    return `<div class="found">
+      <div><div class="name">${esc(d.name)}</div><div class="muted">${esc(d.version||'')}</div></div>
+      <div class="addr">${esc(d.address)}:${d.port} ${d.tls?'<span class="pill">TLS</span>':''}</div>
+      <div class="chips">
+        ${mine.map(([b,i])=>`<span class="chip">${esc(b.name||b.user||'Bridge')}<button title="Remove from this bridge" onclick="unassign(${di},${i})">✕</button></span>`).join('')||'<span class="muted">not assigned</span>'}
+        <select onchange="assign(${di},this.value);this.value=''">
+          <option value="">+ Add to bridge…</option>
+          ${free.map(([b,i])=>`<option value="${i}">${esc(b.name||b.user||'Bridge '+(i+1))}</option>`).join('')}
+          <option value="new">New bridge</option>
+        </select>
+      </div>
+      <div class="acts"><button class="small" onclick="testHost(found[${di}].address,found[${di}].port,this)">Test</button></div>
+    </div>`}).join('');
+}
+
+function kioskRow(k,i,j){
+  const d=foundFor(k);
+  const st=k.id?(d?'<span class="pill ok">found</span>':'<span class="pill warn" title="Not heard over mDNS lately: calls go to the last known address">not seen</span>')
+              :(d?'<span class="pill ok">found</span>':'<span class="pill">manual</span>');
+  const where=k.id
+    ?`<div class="where" title="Found over mDNS: follows the kiosk to a new address"><input readonly tabindex="-1" value="${esc(d?d.address:k.host)}">
+      <input readonly tabindex="-1" value="${d?d.port:(k.port||2324)}"></div>`
+    :`<div class="where"><input placeholder="Host/IP" value="${esc(k.host)}" oninput="cfg.bridges[${i}].kiosks[${j}].host=this.value;dirty()">
+      <input placeholder="2324" type="number" value="${k.port||''}" oninput="cfg.bridges[${i}].kiosks[${j}].port=+this.value;dirty()"></div>`;
+  return `<div class="kiosk">
+    <input placeholder="Name" value="${esc(k.name)}" oninput="cfg.bridges[${i}].kiosks[${j}].name=this.value;dirty()">
+    ${where}<span>${st}</span>
+    <button class="small" onclick="testK(${i},${j},this)">Test</button>
+    <button class="small" title="Remove" onclick="cfg.bridges[${i}].kiosks.splice(${j},1);dirty();render()">✕</button></div>`;
+}
+function renderBridges(){
   $('bridges').innerHTML=cfg.bridges.map((b,i)=>`
   <fieldset><div class="row br">
-   <div><label>Name</label><input value="${esc(b.name)}" oninput="cfg.bridges[${i}].name=this.value"></div>
-   <div><label>SIP user (ext.)</label><input value="${esc(b.user)}" oninput="cfg.bridges[${i}].user=this.value"></div>
-   <div><label>Auth user (opt.)</label><input value="${esc(b.auth_user)}" oninput="cfg.bridges[${i}].auth_user=this.value"></div>
-   <div><label>Password ${b.password_set?'<span class="pill ok">set</span>':''}</label><input type="password" autocomplete="off" placeholder="${b.password_set?'unchanged':''}" oninput="cfg.bridges[${i}].password=this.value"></div>
-   <div><label>Mode</label><select onchange="cfg.bridges[${i}].mode=this.value">
+   <div><label>Name</label><input value="${esc(b.name)}" oninput="cfg.bridges[${i}].name=this.value;dirty();renderFound()"></div>
+   <div><label>SIP user (ext.)</label><input value="${esc(b.user)}" oninput="cfg.bridges[${i}].user=this.value;dirty()"></div>
+   <div><label>Auth user (opt.)</label><input value="${esc(b.auth_user)}" oninput="cfg.bridges[${i}].auth_user=this.value;dirty()"></div>
+   <div><label>Password ${b.password_set?'<span class="pill ok">set</span>':''}</label><input type="password" autocomplete="off" value="${esc(b.password||'')}" placeholder="${b.password_set?'unchanged':''}" oninput="cfg.bridges[${i}].password=this.value;dirty()"></div>
+   <div><label>Mode</label><select onchange="cfg.bridges[${i}].mode=this.value;dirty()">
      <option value="ring" ${b.mode!='announce'?'selected':''}>Ring (first to answer wins)</option>
      <option value="announce" ${b.mode=='announce'?'selected':''}>Announce (one-way to all)</option></select></div>
-   <div><label>Enabled</label><select onchange="cfg.bridges[${i}].enabled=this.value=='1'">
+   <div><label>Enabled</label><select onchange="cfg.bridges[${i}].enabled=this.value=='1';dirty()">
      <option value="1" ${b.enabled?'selected':''}>yes</option><option value="0" ${!b.enabled?'selected':''}>no</option></select></div>
   </div>
   <label>Kiosks</label>
-  ${(b.kiosks||[]).map((k,j)=>`<div class="kiosk">
-    <input placeholder="Name" value="${esc(k.name)}" oninput="cfg.bridges[${i}].kiosks[${j}].name=this.value">
-    <input placeholder="Host/IP" value="${esc(k.host)}" oninput="cfg.bridges[${i}].kiosks[${j}].host=this.value">
-    <input placeholder="2324" type="number" value="${k.port||''}" oninput="cfg.bridges[${i}].kiosks[${j}].port=+this.value">
-    <button onclick="testK(${i},${j},this)">Test</button>
-    <button onclick="cfg.bridges[${i}].kiosks.splice(${j},1);render()">✕</button></div>`).join('')}
-  <button onclick="(cfg.bridges[${i}].kiosks=cfg.bridges[${i}].kiosks||[]).push({name:'',host:'',port:2324});render()">+ Kiosk</button>
-  <button onclick="cfg.bridges.splice(${i},1);render()" style="float:right">Delete bridge</button>
-  </fieldset>`).join('');
+  ${(b.kiosks||[]).map((k,j)=>kioskRow(k,i,j)).join('')||'<div class="muted">No kiosk yet: add one from <i>Kiosks on the network</i> above, or by hand.</div>'}
+  <button class="small" onclick="(cfg.bridges[${i}].kiosks=cfg.bridges[${i}].kiosks||[]).push({name:'',host:'',port:2324});dirty();render()">+ Kiosk by hand</button>
+  <button class="small" onclick="if(confirm('Delete this bridge?')){cfg.bridges.splice(${i},1);dirty();render()}" style="float:right">Delete bridge</button>
+  </fieldset>`).join('')||'<div class="muted">No bridge yet.</div>';
 }
-function addBridge(){cfg.bridges.push({id:'',name:'New',enabled:true,user:'',auth_user:'',mode:'ring',kiosks:[{name:'',host:'',port:2324}]});render()}
-async function testK(i,j,btn){
-  const k=cfg.bridges[i].kiosks[j];btn.disabled=true;
-  const r=await (await fetch('api/test',{method:'POST',body:JSON.stringify({host:k.host,port:k.port||2324})})).json();
-  btn.disabled=false;
-  const t={ready:'ready',off:'intercom off',key:'different key',dnd:'do not disturb',unreachable:'unreachable'}[r.status]||r.status;
-  msg(k.host+': '+t+(r.detail?' – '+r.detail:''),r.status=='ready'?'ok':'err');
+
+function newBridge(){
+  cfg.bridges.push({id:'',name:'Bridge '+(cfg.bridges.length+1),enabled:true,user:'',auth_user:'',mode:'ring',kiosks:[]});
+  return cfg.bridges.length-1;
+}
+function addBridge(){newBridge();dirty();render()}
+function assign(di,v){
+  if(v==='')return;
+  const d=found[di], i=v==='new'?newBridge():+v, b=cfg.bridges[i];
+  b.kiosks=b.kiosks||[];
+  // The same kiosk entered by hand becomes the found one, so it follows the kiosk from now on.
+  const k=b.kiosks.find(k=>!k.id&&same(k,d));
+  if(k){k.id=d.id;k.name=k.name||d.name}
+  else b.kiosks.push({id:d.id,name:d.name,host:d.address,port:d.port});
+  b.kiosks.sort(byName);
+  dirty();render();
+  if(v==='new')msg('New bridge added: enter its SIP user and password, then Save.','warn');
+}
+function unassign(di,i){
+  const d=found[di];
+  cfg.bridges[i].kiosks=(cfg.bridges[i].kiosks||[]).filter(k=>!same(k,d));
+  dirty();render();
+}
+async function scan(btn){
+  btn.disabled=true;
+  try{await fetch('api/kiosks/scan',{method:'POST'});await new Promise(r=>setTimeout(r,1500));await loadFound();render()}
+  finally{btn.disabled=false}
+}
+async function testHost(host,port,btn){
+  btn.disabled=true;
+  try{
+    const r=await (await fetch('api/test',{method:'POST',body:JSON.stringify({host,port:port||2324})})).json();
+    const t={ready:'ready',off:'intercom off',key:'different key',dnd:'do not disturb',unreachable:'unreachable'}[r.status]||r.status;
+    msg(host+': '+t+(r.detail?' – '+r.detail:''),r.status=='ready'?'ok':'err');
+  }finally{btn.disabled=false}
+}
+function testK(i,j,btn){
+  const k=cfg.bridges[i].kiosks[j], d=k.id&&foundFor(k);
+  testHost(d?d.address:k.host,d?d.port:k.port,btn);
 }
 async function save(){
   cfg.intercom_key=$('key').value.trim();
   cfg.sip={server:$('sipServer').value.trim(),local_ip:$('sipLocalIP').value.trim(),local_port:+$('sipPort').value,
     rtp_min:+$('rtpMin').value,rtp_max:+$('rtpMax').value,ring_timeout:+$('ringTimeout').value};
+  // Found kiosks keep their current address as the last known one.
+  for(const b of cfg.bridges)for(const k of b.kiosks||[]){const d=k.id&&foundFor(k);if(d){k.host=d.address;k.port=d.port}}
   const r=await fetch('api/config',{method:'PUT',body:JSON.stringify(cfg)});
   const j=await r.json();
   if(!r.ok){msg(j.error,'err');return}
-  msg('Saved.','ok');await load();
+  await load();msg('Saved.','ok');
 }
 async function poll(){
   try{
@@ -112,7 +225,15 @@ async function poll(){
     h+=s.calls.map(c=>`<div>📞 ${esc(c.bridge)} ← ${esc(c.from)}: ${esc(c.state)}, ${c.seconds}s – ${esc((c.kiosks||[]).join(', '))}</div>`).join('');
     $('status').innerHTML=h||'<i>no active accounts</i>';
     $('log').textContent=await (await fetch('api/logs')).text();
+    if(cfg){
+      await loadFound();
+      const sig=JSON.stringify(found.map(d=>[d.id,d.name,d.address,d.port,d.tls]));
+      // Redraw only when the list changed and nobody is typing in it.
+      const busy=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#found,#bridges');
+      if(sig!==foundSig&&!busy){foundSig=sig;render()}
+    }
   }catch(e){}
 }
-load();poll();setInterval(poll,3000);
+window.addEventListener('beforeunload',e=>{if(unsaved){e.preventDefault();e.returnValue=''}});
+load().then(()=>{foundSig=JSON.stringify(found.map(d=>[d.id,d.name,d.address,d.port,d.tls]))});poll();setInterval(poll,3000);
 </script></body></html>

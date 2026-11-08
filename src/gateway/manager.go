@@ -32,6 +32,7 @@ type Manager struct {
 	legs map[string]*leg
 	runs map[*callRun]struct{}
 	reg  map[string]regStatus
+	disc *Discovery
 }
 
 func NewManager(store *Store, sigPort, sigTLSPort int) *Manager {
@@ -39,6 +40,32 @@ func NewManager(store *Store, sigPort, sigTLSPort int) *Manager {
 		store: store, sigPort: sigPort, sigTLSPort: sigTLSPort,
 		legs: map[string]*leg{}, runs: map[*callRun]struct{}{}, reg: map[string]regStatus{},
 	}
+}
+
+// SetDiscovery hands over the mDNS browser. Without one kiosks are called at
+// their configured address.
+func (m *Manager) SetDiscovery(d *Discovery) {
+	m.mu.Lock()
+	m.disc = d
+	m.mu.Unlock()
+}
+
+// Discovery returns the mDNS browser, nil when there is none.
+func (m *Manager) Discovery() *Discovery {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.disc
+}
+
+// kioskAddr is where to reach a kiosk now: where mDNS last heard it when it
+// was added from there, its configured address otherwise.
+func (m *Manager) kioskAddr(k Kiosk) (string, int) {
+	if d := m.Discovery(); d != nil && k.ID != "" {
+		if p, ok := d.Lookup(k.ID); ok {
+			return p.Address, p.Port
+		}
+	}
+	return k.Host, k.Port
 }
 
 func (m *Manager) Reload(cfg Config) error {
@@ -181,7 +208,11 @@ func (r *callRun) inviteLegs(kind string) {
 		wg.Add(1)
 		go func(l *leg) {
 			defer wg.Done()
-			info, err := r.ic.probe(ctx, l.kiosk.Host, l.kiosk.Port)
+			host, admin := r.m.kioskAddr(l.kiosk)
+			if host != l.kiosk.Host || admin != l.kiosk.Port {
+				log.Printf("call %s: %s now at %s:%d", r.c.callID, l.kiosk.Name, host, admin)
+			}
+			info, err := r.ic.probe(ctx, host, admin)
 			if err != nil {
 				l.status = "unreachable"
 				log.Printf("call %s: %s: %v", r.c.callID, l.kiosk.Name, err)

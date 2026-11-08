@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -20,8 +21,9 @@ const (
 
 // Kiosk is one Kiosk Satellite device a bridge rings.
 type Kiosk struct {
+	ID   string `json:"id,omitempty"` // its mDNS id when found that way: calls follow it to a new address
 	Name string `json:"name"`
-	Host string `json:"host"`
+	Host string `json:"host"` // last known address
 	Port int    `json:"port"` // remote admin port, 2324 by default
 }
 
@@ -113,6 +115,7 @@ func (c *Config) normalize() {
 	}
 	c.IntercomKey = strings.TrimSpace(c.IntercomKey)
 	c.IntercomKeySet = false
+	sort.SliceStable(c.Bridges, func(i, j int) bool { return sortKey(c.Bridges[i].Name) < sortKey(c.Bridges[j].Name) })
 	for i := range c.Bridges {
 		b := &c.Bridges[i]
 		if b.ID == "" {
@@ -125,6 +128,7 @@ func (c *Config) normalize() {
 		b.User = strings.TrimSpace(b.User)
 		for j := range b.Kiosks {
 			k := &b.Kiosks[j]
+			k.ID = strings.TrimSpace(k.ID)
 			k.Host = strings.TrimSpace(k.Host)
 			if k.Port == 0 {
 				k.Port = defaultAdmin
@@ -133,8 +137,15 @@ func (c *Config) normalize() {
 				k.Name = k.Host
 			}
 		}
+		sort.SliceStable(b.Kiosks, func(i, j int) bool { return sortKey(b.Kiosks[i].Name) < sortKey(b.Kiosks[j].Name) })
 	}
 }
+
+var sortFold = strings.NewReplacer("ä", "a", "ö", "o", "ü", "u", "ß", "ss")
+
+// sortKey orders names the way a German reader expects: case ignored and
+// umlauts with their base letter.
+func sortKey(s string) string { return sortFold.Replace(strings.ToLower(strings.TrimSpace(s))) }
 
 func (c Config) validate() error {
 	if c.SIP.RTPMin >= c.SIP.RTPMax {

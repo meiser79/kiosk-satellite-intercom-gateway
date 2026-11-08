@@ -144,3 +144,5 @@ func (k *fakeKiosk) audio(c *websocket.Conn) {
 	close(done)
 	c.Close()
 }
+
+func (k *fakeKiosk) port() int { return k.srv.Listener.Addr().(*net.TCPAddr).Port }

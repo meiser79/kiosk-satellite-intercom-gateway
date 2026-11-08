@@ -19,6 +19,17 @@ const testKey = "test-intercom-key"
 // until its account is registered.
 func setup(t *testing.T, key string, kiosks ...*fakeKiosk) (*gateway.Manager, *fakePBX) {
 	t.Helper()
+	var ks []gateway.Kiosk
+	for _, k := range kiosks {
+		ks = append(ks, gateway.Kiosk{Name: k.mode, Host: "127.0.0.1", Port: k.port()})
+	}
+	return setupWith(t, key, ks, nil)
+}
+
+// setupWith is setup for kiosks configured by hand, with an mDNS browser
+// when disc is set.
+func setupWith(t *testing.T, key string, ks []gateway.Kiosk, disc *gateway.Discovery) (*gateway.Manager, *fakePBX) {
+	t.Helper()
 	pbx := newFakePBX(t)
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -30,13 +41,12 @@ func setup(t *testing.T, key string, kiosks ...*fakeKiosk) (*gateway.Manager, *f
 		t.Fatal(err)
 	}
 	mgr := gateway.NewManager(store, sigPort, sigPort+1)
+	if disc != nil {
+		mgr.SetDiscovery(disc)
+	}
 	go http.Serve(ln, mgr.SignalHandler())
 	t.Cleanup(func() { ln.Close(); mgr.Close() })
 
-	var ks []gateway.Kiosk
-	for _, k := range kiosks {
-		ks = append(ks, gateway.Kiosk{Name: k.mode, Host: "127.0.0.1", Port: k.srv.Listener.Addr().(*net.TCPAddr).Port})
-	}
 	cfg, err := store.Update(gateway.Config{
 		IntercomKey: key,
 		SIP: gateway.SIPConfig{Server: fmt.Sprintf("127.0.0.1:%d", pbx.port()), LocalIP: "127.0.0.1",
@@ -245,4 +255,18 @@ func TestKeepAliveAuthenticates(t *testing.T) {
 	if n := pbx.optChal.Load(); n != 1 {
 		t.Fatalf("pings challenged %d times, want once", n)
 	}
+}
+
+// A kiosk added from the mDNS list is called where it announces itself now,
+// not at the address it had when it was added.
+func TestCallFollowsKioskToNewAddress(t *testing.T) {
+	k := newFakeKiosk(t, testKey, "answer")
+	disc := gateway.NewDiscovery()
+	disc.HandlePacket(announcement("kiosk-42", "Hallway", "127.0.0.1", k.port(), 120), &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	_, pbx := setupWith(t, testKey, []gateway.Kiosk{{ID: "kiosk-42", Name: "Hallway", Host: "192.0.2.1", Port: 2324}}, disc)
+
+	pbx.invite("call-mdns@pbx")
+	pbx.wait(180, 5*time.Second)
+	pbx.send("CANCEL", "call-mdns@pbx", 1, "", nil)
+	pbx.wait(487, 3*time.Second)
 }

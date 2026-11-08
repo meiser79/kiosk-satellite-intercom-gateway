@@ -13,7 +13,8 @@ Asterisk ── SIP/RTP (G.711) ──▶ Gateway ── HTTP + WebSocket (PCM16
 - *Ring* mode: all kiosks ring, the first to answer wins, the others are cancelled.
 - The kiosk shows the **SIP caller** as the caller: "Name (number)" from the caller's display name and number; for trunk calls `P-Asserted-Identity` is preferred. The name appears on the ring screen, in the log, in missed calls and in the intercom sensor.
 - *Announce* mode: one-way audio to all kiosks of the bridge (the kiosk's "announcements" feature).
-- Configuration page: intercom key (input only, never sent back), PBX, bridges, a "Test" button per kiosk, status and log.
+- Kiosks are found over mDNS (`_kiosk-satellite._tcp`) and assigned to a bridge from the list; a kiosk added that way is called at the address it announces now, so a new DHCP lease does not break it. Kiosks in other networks can still be entered by hand.
+- Configuration page: intercom key (input only, never sent back), PBX, kiosks on the network, bridges, a "Test" button per kiosk, status and log.
 - Runs as a Docker container or a Home Assistant add-on (ingress, configuration in `addon_config`).
 
 ## Not included
@@ -22,7 +23,7 @@ Kiosk → SIP (outgoing calls from a kiosk), SRTP/TLS on the SIP side, G.722/Opu
 ## Layout
 ```
 src/main.go          daemon entry point: environment, listeners, wiring
-src/gateway/         configuration store, SIP user agent, intercom client, call logic, web UI
+src/gateway/         configuration store, SIP user agent, intercom client, call logic, mDNS discovery, web UI
 src/audio/           G.711 and 8 kHz <-> 16 kHz conversion
 tests/               black-box tests: fake PBX and fake kiosk, protocol vectors
 config.yaml          Home Assistant add-on manifest (the Dockerfile builds ./src)
