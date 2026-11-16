@@ -71,3 +71,8 @@ The tests start a simulated PBX (REGISTER with digest, INVITE, RTP, BYE) and sim
 
 ## Protocol
 The gateway reimplements Kiosk Satellite's intercom protocol (it does not copy its code): HMAC-SHA256 token (`"intercom:"+KEY`, 60 s, single use), `GET /api/intercom/identity`, `POST /api/intercom/call`, signals `POST /api/intercom/call/<id>`, audio over WebSocket in 80 ms PCM16 frames. The key is a signing secret, not an encryption key; encryption is the kiosks' TLS setting (neither side checks certificates).
+
+## License
+Copyright 2026 Peter Meiser
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
